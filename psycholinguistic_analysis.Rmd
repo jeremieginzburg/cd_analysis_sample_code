@@ -1,0 +1,342 @@
+---
+title: "psycholinguistic factors analysis"
+output: html_document
+---
+```{r get lexique383 data}
+require(tidyverse)
+require(rjson)
+source('https://raw.githubusercontent.com/chrplr/openlexicon/master/datasets-info/fetch_datasets.R')
+lexique <- get_lexique383_rds()
+```
+
+```{r,include = FALSE}
+library(tidyverse)
+library(Rcpp)
+library(ggplot2)
+library(rstatix)
+library(dplyr)
+library(stringdist)
+library(knitr)
+
+stderr <- function(x){sqrt(var(x,na.rm=TRUE)/length(na.omit(x)))}
+lowsd <- function(x){return(mean(x)-stderr(x))}
+highsd <- function(x){return(mean(x)+stderr(x))}
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+  )
+}
+```
+
+### Frequency of occurence
+
+```{r on accuracy}
+
+### GLM on count data 
+model_glm <- glm(cbind(glm_perf_freqlemfilms2$count,glm_perf_freqlemfilms2$num_tot) ~ grade*freqlemfilms2*difficulty ,family = binomial(link="logit"), data = glm_perf_freqlemfilms2)
+summary(model_glm)
+### stats on GLM
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+### calculation of means and SD, minimum and maximum of aerage frequency of occurence per target-word
+glm_perf_freqlemfilms2 %>%
+  group_by(ortho,freqlemfilms) %>%
+  summarise() -> desc_glm_perf_freqlemfilms2
+mean(desc_glm_perf_freqlemfilms2$freqlemfilms2)
+sd(desc_glm_perf_freqlemfilms2$freqlemfilms2)
+min(desc_glm_perf_freqlemfilms2$freqlemfilms2)
+max(desc_glm_perf_freqlemfilms2$freqlemfilms2)
+
+```
+```{r on RT}
+### GLMM on RTs
+model_glm <- glm(TR ~ grade*freqlemfilms2*difficulty ,family = inverse.gaussian(link='log'), data = glm_TR_freqlemfilms2)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### plot for the direction of the effect of frequency occurence on RTs
+glm_TR_freqlemfilms2 %>%
+  group_by(ortho) %>%
+  summarise(freq = mean(freqlemfilms2),TR = mean(TR)) -> for_plot
+ggplot(for_plot,aes(x = freq, y = TR)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic()
+```
+
+
+### Levenshtein distance
+
+```{r calculation of levenshtein distance for each 4-images set}
+for (i in 1:nrow(quad_table)){
+  quad_table[i,"lv_dist"] = mean(stringdist(c(quad_table[i,"mot2_phon"],quad_table[i,"mot3_phon"],quad_table[i,"mot4_phon"]),quad_table[i,"mot1_phon"],method="lv"))
+}
+```
+
+
+```{r on accuracy EASY CONDITION}
+perf_by_word %>%
+  group_by(ortho,difficulty,lv_dist) %>%
+  summarise() -> lv_dist_by_word
+### calculation of mean levenshtein distance for each difficulty
+mean(subset(lv_dist_by_word,difficulty == "easy")$lv_dist)
+mean(subset(lv_dist_by_word,difficulty == "difficult")$lv_dist)
+
+### subset data for easy condition
+perf_by_word %>%
+  subset(difficulty == "easy") %>%
+  select(ortho,count,num_tot,grade,quad,lv_dist) %>%
+  group_by(ortho,grade,quad,lv_dist) %>%
+  summarise(count = sum(count),num_tot = sum(num_tot)) -> glm_perf_lv_dist
+
+### GLM on count data
+model_glm <- glm(cbind(glm_perf_lv_dist$count,glm_perf_lv_dist$num_tot) ~ grade*lv_dist ,family = binomial(link="logit"), data = glm_perf_lv_dist)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+```
+
+```{r on accuracy DIFFICULT CONDITION}
+### subset data for difficult condition
+perf_by_word %>%
+  subset(difficulty == "difficult") %>%
+  group_by(ortho,grade,quad,lv_dist) %>%
+  summarise(count = sum(count),num_tot = sum(num_tot),perf = mean(perf)) -> glm_perf_lv_dist
+
+model_glm <- glm(cbind(glm_perf_lv_dist$count,glm_perf_lv_dist$num_tot) ~ grade*lv_dist ,family = binomial(link="logit"), data = glm_perf_lv_dist)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### plot for the direction of the effect of levenshtein distance on accuracy
+glm_perf_lv_dist %>%
+  group_by(ortho,quad,lv_dist) %>%
+  summarise(perf = mean(perf)) -> for_plot
+
+ggplot(for_plot,aes(x = lv_dist, y = perf)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic()
+
+```
+
+```{r on RTs EASY CONDITION}
+### subset data for easy condition
+perf_by_word %>% 
+  subset(difficulty == "easy") %>%
+  select(difficulty,TR,grade,quad,lv_dist) %>%
+  group_by(difficulty,grade,quad,lv_dist) %>%
+  summarise(TR = mean(TR)) -> glm_TR_lv_dist_easy
+
+### GLM on RTs
+model_glm <- glm(TR ~ grade*lv_dist ,family = inverse.gaussian(link='log'), data = glm_TR_lv_dist_easy)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### plot for the direction of the effect of levenshtein distance on RTs
+
+perf_by_word %>%
+  group_by(quad,lv_dist,difficulty) %>%
+  summarise(TR = mean(TR)) -> glm_TR_lv_dist_plot
+
+ggplot(glm_TR_lv_dist_plot,aes(x = lv_dist, y = TR,fill = difficulty, color = difficulty)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_classic()
+```
+
+```{r on RTs DIFFICULT CONDITION}
+### subset data for difficult condition
+perf_by_word %>% 
+  subset(difficulty == "difficult") %>%
+  select(difficulty,TR,grade,quad,lv_dist) %>%
+  group_by(difficulty,grade,quad,lv_dist) %>%
+  summarise(TR = mean(TR)) -> glm_TR_lv_dist_easy
+
+### GLM on RTs
+model_glm <- glm(TR ~ grade*lv_dist ,family = inverse.gaussian(link='log'), data = glm_TR_lv_dist_easy)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### plot for the direction of the effect of levenshtein distance on RTs
+
+perf_by_word %>%
+  group_by(quad,lv_dist,difficulty) %>%
+  summarise(TR = mean(TR)) -> glm_TR_lv_dist_plot
+
+ggplot(glm_TR_lv_dist_plot,aes(x = lv_dist, y = TR,fill = difficulty, color = difficulty)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_classic()
+
+```
+
+
+## Number of unique phonological neighbor per 4-image set
+
+```{r on accuracy EASY CONDITION}
+perf_by_word %>%
+  subset(difficulty == "easy") %>%
+  group_by(grade,quad,voisphonquad) %>%
+  summarise(count = sum(count),num_tot = sum(num_tot)) -> glm_perf_voisphonquad
+
+### GLM on count data
+model_glm <- glm(cbind(glm_perf_voisphonquad$count,glm_perf_voisphonquad$num_tot) ~ grade*voisphonquad ,family = binomial(link="logit"), data = glm_perf_voisphonquad)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### plot for the direction of the effect
+perf_by_word %>%
+  group_by(quad,voisphonquad) %>%
+  summarise(perf = mean(perf)) -> for_plot
+
+ggplot(for_plot,aes(x = voisphonquad, y = perf)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_classic()
+
+```
+
+```{r on accuracy DIFFICULT CONDITION}
+perf_by_word %>%
+  subset(difficulty == "difficult") %>%
+  group_by(grade,quad,voisphonquad) %>%
+  summarise(count = sum(count),num_tot = sum(num_tot)) -> glm_perf_voisphonquad
+
+### GLM on count data
+model_glm <- glm(cbind(glm_perf_voisphonquad$count,glm_perf_voisphonquad$num_tot) ~ grade*voisphonquad ,family = binomial(link="logit"), data = glm_perf_voisphonquad)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### plot of main effect of phonological neighbors on accuracy
+perf_by_word %>%
+  subset(difficulty == "difficile") %>%
+  group_by(quad,voisphonquad) %>%
+  summarise(perf = mean(perf)) -> for_plot
+
+ggplot(for_plot,aes(x = voisphonquad, y = perf)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_classic()
+
+```
+
+
+
+
+
+```{r on RTs EASY CONDITION}
+glm_table_all_correct_common %>%
+  subset(difficulty == "easy") -> glm_TR_voisphonquad
+
+### GLM on RTs
+model_glm <- glm(Trsec ~ grade*voisphonquad ,family = inverse.gaussian(link='log'), data = glm_TR_voisphonquad)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### plot of main effect of phonological neighbors on RTs
+
+glm_TR_voisphonquad %>%
+  group_by(quad,voisphonquad) %>%
+  summarise(TR = mean(Trsec)) -> for_plot
+
+ggplot(for_plot,aes(x = voisphonquad, y = TR)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_classic()
+
+```
+
+
+```{r on RTs DIFFICULT CONDITION}
+glm_table_all_correct_common %>%
+  subset(difficulty == "difficult") -> glm_TR_voisphonquad
+
+### GLM on RTs
+model_glm <- glm(Trsec ~ grade*voisphonquad ,family = inverse.gaussian(link='log'), data = glm_TR_voisphonquad)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### plot of main effect of phonological neighbors on RTs
+
+glm_TR_voisphonquad %>%
+  group_by(quad,voisphonquad) %>%
+  summarise(TR = mean(Trsec)) -> for_plot
+
+ggplot(for_plot,aes(x = voisphonquad, y = TR)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_classic()
+
+```
+
+
+```{r analysis of the easy/difficult ration of RTs in function of age and number of unique phonological neighbors}
+
+### creation of the easy/difficult ratio
+glm_table_all_correct_common %>%
+  group_by(ID,difficulty) %>%
+  summarise(TR = mean(Trsec))  %>%
+  spread(difficulty,TR) %>%
+  mutate(ratio = easy/difficult,ID = as.factor(ID)) %>%
+  ungroup() -> ratio
+ratio = as.data.frame(ratio)
+
+### adding the ratio column to the raw glm table
+for (i in 1:nrow(ratio)){
+  which_row = which(as.character(glm_table_all_correct_common$ID) == as.character(ratio[i,"ID"]))
+  glm_table_all_correct_common[which_row,"ratioTR"] = ratio[i,"ratio"]
+}
+
+### subsetting the easy condition
+glm_table_all_correct_common %>%
+  subset(difficulty == "easy") %>%
+  group_by(ID,difficulty,quad,voisphonquad,age_in_months,ratioTR) %>%
+  summarise() -> glm_ratio_voisphonquad
+
+### GLM on ratio
+model_glm <- glm(ratioTR ~ age_in_months*voisphonquad ,family = gaussian(link='identity'), data = glm_ratio_voisphonquad)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+### subsetting the difficult condition
+glm_table_all_correct_common %>%
+  subset(difficulty == "difficult") %>%
+  group_by(ID,difficulty,quad,voisphonquad,age_in_months,ratioTR) %>%
+  summarise() -> glm_ratio_voisphonquad
+
+### GLM on ratio
+model_glm <- glm(ratioTR ~ age_in_months*voisphonquad ,family = gaussian(link='identity'), data = glm_ratio_voisphonquad)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+```
+

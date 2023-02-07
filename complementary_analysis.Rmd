@@ -1,0 +1,245 @@
+---
+title: "complementary analysis"
+output: html_document
+---
+
+
+```{r,include = FALSE}
+library(tidyverse)
+library(ggplot2)
+library(rstatix)
+library(quickpsy)
+library(ggpubr)
+library(rstatix)
+library(lme4)
+library(emmeans)
+library(gridExtra)
+library(psych)
+```
+
+
+#### Analysis in function of the serie presented (across an experimental block)
+
+
+```{r on accuracy}
+### Binomial GLM in function of SNR, age group and serie
+model_glm <- glm(cbind(glm_table_perf_children$countval,glm_table_perf_children$countot) ~ SNRdB*serie*grade ,family = binomial(link="logit"), data = glm_table_perf_children)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+```
+
+```{r on RTs}
+### Inverse gaussian GLM in function of SNR, age group and serie
+model_glm <- glm(Trsec ~ SNRdB*serie*grade ,family = inverse.gaussian(link="log"), data = glm_table_all_children)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+```
+#### Same analysis in function of serie but only with younger children (1st quartile of age)
+
+```{r}
+#### We find the first quartile:
+print(paste0("the first quartile is ",quantile(age_table$age_in_months, 0.25)/12))
+
+prop_table_time %>%
+  subset(age_in_months < 87.25) -> prop_table_time_1st_quart
+```
+```{r on accuracy}
+### Binomial GLM in function of SNR and serie
+model_glm <- glm(cbind(prop_table_time_1st_quart$countval,prop_table_time_1st_quart$countot) ~ SNRdB*serie ,family = binomial(link="logit"), data = prop_table_time_1st_quart)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+```
+
+
+```{r on RTs}
+glm_table_all_children %>%
+  subset(age_in_months < 87.25) -> glm_table_all_children_1st_quart
+
+### Inverse gaussian GLM in function of SNR and serie
+model_glm <- glm(Trsec ~ SNRdB*serie ,family = inverse.gaussian(link="log"), data = glm_table_all_children_1st_quart)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+```
+
+
+#### Analysis on RTs in function of the length of target-word on data with only correct trials that are common between easy and difficult conditions
+
+```{r}
+raw_data %>%
+  subset(grade != "adult" & ans == 1) -> raw_data_correct
+
+
+final_table = data.frame(matrix(nrow = 0, ncol = length(colnames(raw_data_correct))+1)) 
+colnames(final_table) = c(colnames(raw_data_correct),"nb_trials_kept")
+for (suj in 1:length(unique(raw_data_correct$ID))){
+  for (snr in 1:length(unique(raw_data_correct$SNRdB))){
+    raw_data_correct %>%
+      subset(ID == unique(raw_data_correct$ID)[suj] & SNRdB == unique(raw_data_correct$SNRdB)[snr]) -> trials
+    easy_trials <- subset(trials,difficulty == "easy")
+    difficult_trials <- subset(trials,difficulty == "difficult")
+    if (nrow(easy_trials) < nrow(difficult_trials)){
+       to_keep = difficult_trials[which(difficult_trials$motenvoye %in% easy_trials$motenvoye),"motenvoye"]
+    } else{
+       to_keep = easy_trials[which(easy_trials$motenvoye %in% difficult_trials$motenvoye),"motenvoye"]
+    }
+    trials$nb_trials_kept = length(to_keep)
+    final_table =  rbind(final_table,trials[which(trials$motenvoye %in% to_keep),])
+  }
+}
+
+print(paste0("By filtering out the invalid trials, the incorrect trials and keeping only the common words between easy and difficult for each block, we kept ", round(nrow(final_table)/(nrow(unique(raw_data_correct$ID))*48*2)*100,digits = 1), "% of all trials"))
+```
+
+```{r}
+### Inverse Gaussian GLM model with age group, difficulty, SNR level and target-word length as factors
+model_glm <- glm(Trsec ~ grade*difficulty*SNRdB*taillems ,family = inverse.gaussian(link='log'), data = final_table)
+summary(model_glm)
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### post-hoc correlations between RTs and post-hoc per age group:
+final_table %>%
+  select(Trsec,grade,taillems) %>%
+  group_by(grade) %>%
+  summarise(cor_coeff = cor.test(Trsec,taillems,method = "kendall")$estimate,cor_p = cor.test(Trsec,taillems,method = "kendall")$p.value) -> cor_results
+cor_results
+```
+
+
+```{r easy/difficult RT ration in function of the length of the target word}
+### normality test on ratio
+shapiro.test(unique(glm_ratio_taillems$ratioTR))
+
+### Gaussian GLM on ratio in function of age and length of the target word
+model_glm <- glm(ratioTR ~ age_in_months*taillems ,family = gaussian(link='identity'), data = glm_ratio_taillems)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### Gaussian GLM on ratio in function of log(age) and length of the target word
+model_glm <- glm(ratioTR ~ log(age_in_months)*taillems ,family = gaussian(link='identity'), data = glm_ratio_taillems)
+summary(model_glm)
+
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+### plot of the direction of the evolution of ratio in function of age
+glm_ratio_taillems %>%
+  group_by(ID,age_in_months) %>%
+  summarise(ratioTR = mean(ratioTR)) -> glm_ratio_age
+
+ggplot(data = glm_ratio_age,aes(x = log(log(age_in_months)), y = ratioTR ) ) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic()
+```
+
+#### Comparison of easy/difficult ratio between older children (5th grade) and adults
+
+```{r comparaison valeur de ratio CM2/adultes}
+glm_table_all_correct_common_ratio_ad %>%
+  group_by(SNRdB) %>%
+  summarise(ratioTR = mean(ratioTR))
+
+glm_table_all_correct_common_ratio_ch %>%
+  subset(grade == "CM2") %>%
+  group_by(SNRdB) %>%
+  summarise(ratioTR = mean(ratioTR))
+```
+
+#### Evolution of the difference of accuracy between SNR -3 and SNR +3 as a function of age
+
+```{r}
+### from raw data, calculation of the accuracy difference between SNR -3 and SNR +3
+glm_table_all %>%
+  group_by(ID,grade,SNRdB,difficulty) %>%
+  summarise(perf = mean(ans)) %>%
+  tidyr::spread(key = SNRdB, value = perf) %>%
+  mutate(diffSNR = `3` - `-3`) %>%
+  group_by(grade,difficulty) %>%
+  summarise(mean_diffSNR = mean(diffSNR),sd_diffSNR = stats::sd(diffSNR,na.rm = T)) %>%
+  ungroup()-> diffSNR_table
+  diffSNR_table$difficulty = factor(diffSNR_table$difficulty, levels = c("easy","difficult"))
+
+### Figure of the evolution of SNR difference across age group
+
+perf_diffSNR_fig = ggplot(diffSNR_table, aes(x=grade,y=mean_diffSNR, ymin = mean_diffSNR - sd_diffSNR, ymax = mean_diffSNR + sd_diffSNR,fill = difficulty,colour = difficulty)) +
+  geom_pointrange(position = position_dodge(0.4)) +
+  scale_x_discrete(limits=c("GS","CP","CE1","CE2","CM1","CM2","adult"), labels = c("KG","1st","2nd","3rd","4th","5th","Adults")) +
+  ylab(label ="Perf difference between \n SNR +3 and SNR -3") +
+  xlab(label="Grades") +
+  scale_fill_manual(values=c("#d8b365", "#5ab4ac"),name = "Difficulty", labels = c("Easy","Difficult")) +
+    scale_colour_manual(values=c("#d8b365", "#5ab4ac"),name = "Difficulty", labels = c("Easy","Difficult")) +
+  #coord_cartesian(ylim = c(0,100)) +
+  theme_light() +
+  theme_classic()+
+  theme(axis.text=element_text(size=18),axis.title=element_text(size=25),legend.text=element_text(size=23),legend.title=element_text(size=25),strip.text.x = element_text(size = 20))
+perf_diffSNR_fig
+
+ggsave("perf_diffSNR_fig.png", plot = perf_diffSNR_fig,device = "png",width = 12,height = 7)
+```
+
+
+#### Interclass correlation between series
+
+```{r}
+### SNR +3 dB
+ICC_table %>%
+  subset(SNRdB == "3") %>% 
+  ungroup() %>%
+  dplyr::select(serie1,serie2,serie3,serie4) -> ICC_matrix_snrp3
+
+icc(ICC_matrix_snrp3, model = "twoway",
+  type = "consistency", unit = "average")
+ICC(ICC_matrix_snrp3)
+
+### SNR -3 dB
+ICC_table %>%
+  subset(SNRdB == "-3") %>% 
+  ungroup() %>%
+  dplyr::select(serie1,serie2,serie3,serie4) -> ICC_matrix_snrm3
+
+icc(ICC_matrix_snrm3, model = "twoway",
+  type = "consistency", unit = "average")
+
+ICC(ICC_matrix_snrm3)
+
+```
+
+#### Ranking of performance word and per age group
+
+```{r}
+glm_table_all %>%
+  subset(dys != 1 & grade != "adult") %>%
+  group_by(grade,difficulty,motenvoye) %>%
+  summarise(perf = mean(ans)) %>%
+  group_by(grade,difficulty) %>%
+  mutate(ranked_perf = rank(-perf, ties.method = "first")) -> ranked_perf 
+
+#### easiest words and hardest words for KG children
+ranked_perf %>%
+  subset(grade == "GS") %>%
+  group_by(difficulty) %>%
+  summarise(motenvoye_min = motenvoye[which.min(ranked_perf)], motenvoye_max = motenvoye[which.max(ranked_perf)]) 
+
+#### correlation of ranked words between all age groups
+ranked_perf %>%
+  select(-perf)  %>%
+  spread(key = grade, value = ranked_perf) %>% 
+  ungroup() %>%
+  mutate(mean_ranked = rowMeans(select(.,c(-motenvoye,-difficulty))))-> ranked_perf_for_cor
+cor(ranked_perf_for_cor[,c()])
+
+
+```
+

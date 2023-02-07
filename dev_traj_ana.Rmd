@@ -1,0 +1,388 @@
+---
+title: "developmental trajectory analysis"
+output: html_document
+---
+
+```{r,include = FALSE, libraries and functions}
+library(tidyverse)
+library(ggplot2)
+library(rstatix)
+library(ggpubr)
+library(lme4)
+library(emmeans)
+library(gridExtra)
+
+stderr <- function(x){sqrt(var(x,na.rm=TRUE)/length(na.omit(x)))}
+lowsd <- function(x){return(mean(x)-stderr(x))}
+highsd <- function(x){return(mean(x)+stderr(x))}
+```
+
+## Dev trajectory
+### on accuracy
+```{r}
+
+#### transformation of the raw data into proportion and count data
+glm_table_all %>%
+  subset(grade != "adult") %>%
+  select(ID,ans,difficulty,SNRdB,grade) %>%
+  group_by(ID,difficulty,SNRdB,grade) %>%
+  summarise(count = sum(ans == 1),num_tot = n(),freq = mean(ans)) %>%
+  ungroup()  -> glm_table_prop_child
+
+#### Selection of the best predictor combination based on AIC
+step_res = stats::step(glm(cbind(glm_table_prop_child$count,glm_table_prop_child$num_tot)~ grade*SNRdB*difficulty ,family = binomial(link="logit"), data = glm_table_prop_child))$call
+print(paste0("the model with the lowest AIC is ", step_res[3]))
+
+#### GLM on binomial count data
+model_glm <- glm(cbind(glm_table_prop_child$count,glm_table_prop_child$num_tot)~ grade+SNRdB+difficulty + SNRdB:difficulty ,family = binomial(link="logit"), data = glm_table_prop_child)
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### post-hoc for the grade factor
+em = emmeans(model_glm,"grade")
+pairs(em,adjust = "fdr")
+
+
+```
+### on correct response times
+
+```{r}
+#### select only correct trials
+glm_table_all %>%
+  subset(grade != "adult" & ans == 1) %>%
+  ungroup()  -> glm_table_corrRT_child
+
+#### selection of the right distribution (inverse guassian vs gamma) and log link function (identity vs log) 
+model1RT <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model1RT,file = "glm_models/model1RT")
+model2RT <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model2RT,file = "glm_models/model2RT")
+model3RT <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = Gamma(), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model3RT,file = "glm_models/model3RT")
+model4RT <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = Gamma(link='log'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model4RT,file = "glm_models/model4RT")
+
+###### model comparison, selection of the model with lowest AIC
+###### model comparison
+load("glm_models/model1RT")
+load("glm_models/model2RT")
+load("glm_models/model3RT")
+load("glm_models/model4RT")
+modelCompRT = anova(model1RT,model2RT,model3RT,model4RT)
+print(paste0("the model with the lowest AIC is ", row.names(modelCompRT)[which(modelCompRT$AIC == min(modelCompRT$AIC))]))
+
+#### selection of the right random factor configuration
+
+model1RTslopes <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model1RTslopes,file = "glm_models/model1RTslopes")
+
+model2RTslopes <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model2RTslopes,file = "glm_models/model2RTslopes")
+
+model3RTslopes <- glmer(TRsecval ~ grade*SNRdB*difficulty + (difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model3RTslopes,file = "glm_models/model3RTslopes")
+
+model4RTslopes <- glmer(TRsecval ~ grade*SNRdB*difficulty + (1|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model4RTslopes,file = "glm_models/model4RTslopes")
+
+###### model comparison
+load("glm_models/model1RTslopes")
+load("glm_models/model2RTslopes")
+load("glm_models/model3RTslopes")
+load("glm_models/model4RTslopes")
+modelCompRTslopes = anova(model1RTslopes,model2RTslopes,model3RTslopes,model4RTslopes)
+print(paste0("the model with the lowest AIC is ", row.names(modelCompRTslopes)[which(modelCompRTslopes$AIC == min(modelCompRTslopes$AIC))]))
+
+#### selection of the right fixed factor configuration
+
+model1RTFF <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model1RTFF,file = "glm_models/model1RTFF")
+model2RTFF <- glmer(TRsecval ~ (grade+SNRdB+difficulty)^2 + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model2RTFF,file = "glm_models/model2RTFF")
+model3RTFF <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:SNRdB + grade:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model3RTFF,file = "glm_models/model3RTFF")
+model4RTFF <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:SNRdB + SNRdB:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model4RTFF,file = "glm_models/model4RTFF")
+model5RTFF <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:difficulty + SNRdB:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model5RTFF,file = "glm_models/model5RTFF")
+model6RTFF <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:SNRdB + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model6RTFF,file = "glm_models/model6RTFF")
+model7RTFF <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model7RTFF,file = "glm_models/model7RTFF")
+model8RTFF <- glmer(TRsecval ~ grade+SNRdB+difficulty + SNRdB:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model8RTFF,file = "glm_models/model8RTFF")
+
+###### model comparison
+load("glm_models/model1RTFF")
+load("glm_models/model2RTFF")
+load("glm_models/model3RTFF")
+load("glm_models/model4RTFF")
+load("glm_models/model5RTFF")
+load("glm_models/model6RTFF")
+load("glm_models/model7RTFF")
+load("glm_models/model8RTFF")
+
+modelCompRTFF = anova(model1RTFF,model2RTFF,model3RTFF,model4RTFF,model5RTFF,model6RTFF,model7RTFF,model8RTFF)
+print(paste0("the model with the lowest AIC is ", row.names(modelCompRTFF)[which(modelCompRTFF$AIC == min(modelCompRTFF$AIC))]))
+
+
+#### final model
+model_glm_final <- glmer(TRsecval ~ grade+SNRdB+difficulty + SNRdB:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_child,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model_glm_final,file = "glm_models/model_glm_final")
+###### stats on the final model
+load("glm_models/model_glm_final")
+statsmodelglm = Anova(model_glm_final,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+
+#### post-hocs for grade factor
+em = emmeans(model_glm_final, "grade")
+pairs(em,adjust = "fdr")
+#### post-hocs for SNRdB:difficulty interaction
+PH_SNR_DIFF <- emmeans(model_glm_final, pairwise ~  SNRdB | difficulty)
+print(PH_SNR_DIFF)
+PH_DIFF_SNR <- emmeans(model_glm_final, pairwise ~  difficulty | SNRdB)
+print(PH_DIFF_SNR)
+
+```
+
+## comparison between 5th graders and adults
+### on accuracy
+
+```{r}
+
+#### transformation of the raw data into proportion and count data and selection of adults and 5th graders
+glm_table_all %>%
+  subset(grade == "adult" | grade == "CM2") %>%
+  select(ID,ans,difficulty,SNRdB,grade) %>%
+  group_by(ID,difficulty,SNRdB,grade) %>%
+  summarise(count = sum(ans == 1),num_tot = n(),freq = mean(ans)) %>%
+  droplevels() %>%
+  ungroup()  -> glm_table_prop_advschild
+
+#### selecting the right predictors
+step_res = stats::step(glm(cbind(glm_table_prop_advschild$count,glm_table_prop_advschild$num_tot)~ grade*SNRdB*difficulty ,family = binomial(link="logit"), data = glm_table_prop_advschild))$call$formula
+print(paste0("the model with the lowest AIC is ", step_res[3]))
+
+#### final model
+model_glm <- glm(cbind(glm_table_prop_advschild$count,glm_table_prop_advschild$num_tot)~ grade+SNRdB+difficulty + grade:difficulty ,family = binomial(link="logit"), data = glm_table_prop_advschild)
+#### stats
+statsmodelglm = Anova(model_glm,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+#### post-hoc on the group:difficulty interaction
+PH_group_diff = emmeans(model_glm, pairwise ~ grade | difficulty)
+print(PH_group_diff)
+PH_diff_group = emmeans(model_glm, pairwise ~ difficulty | grade)
+print(PH_diff_group)
+```
+
+```{r}
+
+#### select only correct trials and adults and 5th graders
+glm_table_all %>%
+  subset((grade == "adult" | grade == "CM2") & ans == 1) %>%
+  ungroup() %>%
+  droplevels() -> glm_table_corrRT_advschild
+
+#### selection of the right distribution (inverse guassian vs gamma) and log link function (identity vs log) 
+model1RTcva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='identity'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model1RTcva,file = "glm_models/model1RTcva")
+model2RTcva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model2RTcva,file = "glm_models/model2RTcva")
+model3RTcva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = Gamma(), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model3RTcva,file = "glm_models/model3RTcva")
+model4RTcva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = Gamma(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model4RTcva,file = "glm_models/model4RTcva")
+
+###### model comparison, selection of the model with lowest AIC
+modelCompRT = anova(model1RTcva,model2RTcva,model3RTcva,model4RTcva)
+print(paste0("the model with the lowest AIC is ", row.names(modelCompRT)[which(modelCompRT$AIC == min(modelCompRT$AIC))]))
+
+#### selection of the right random factor configuration
+
+model1RTslopescva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model1RTslopescva,file = "glm_models/model1RTslopescva")
+
+model2RTslopescva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model2RTslopescva,file = "glm_models/model2RTslopescva")
+
+model3RTslopescva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model3RTslopescva,file = "glm_models/model3RTslopescva")
+
+model4RTslopescva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (1|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model4RTslopescva,file = "glm_models/model4RTslopescva")
+
+###### model comparison
+load("glm_models/model1RTslopescva")
+load("glm_models/model2RTslopescva")
+load("glm_models/model3RTslopescva")
+load("glm_models/model4RTslopescva")
+
+modelCompRTslopes = anova(model1RTslopescva,model2RTslopescva,model3RTslopescva,model4RTslopescva)
+print(paste0("the model with the lowest AIC is ", row.names(modelCompRTslopes)[which(modelCompRTslopes$AIC == min(modelCompRTslopes$AIC))]))
+
+#### selection of the right fixed factor configuration
+
+model1RTFFcva <- glmer(TRsecval ~ grade*SNRdB*difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model1RTFFcva,file = "glm_models/model1RTFFcva")
+model2RTFFcva <- glmer(TRsecval ~ (grade+SNRdB+difficulty)^2 + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model2RTFFcva,file = "glm_models/model2RTFFcva")
+model3RTFFcva <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:SNRdB + grade:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model3RTFFcva,file = "glm_models/model3RTFFcva")
+model4RTFFcva <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:SNRdB + SNRdB:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model4RTFFcva,file = "glm_models/model4RTFFcva")
+model5RTFFcva <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:difficulty + SNRdB:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model5RTFFcva,file = "glm_models/model5RTFFcva")
+model6RTFFcva <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:SNRdB + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model6RTFFcva,file = "glm_models/model6RTFFcva")
+model7RTFFcva <- glmer(TRsecval ~ grade+SNRdB+difficulty + grade:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model7RTFFcva,file = "glm_models/model7RTFFcva")
+model8RTFFcva <- glmer(TRsecval ~ grade+SNRdB+difficulty + SNRdB:difficulty + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model8RTFFcva,file = "glm_models/model8RTFFcva")
+
+###### model comparison
+load("glm_models/model1RTFFcva")
+load("glm_models/model2RTFFcva")
+load("glm_models/model3RTFFcva")
+load("glm_models/model4RTFFcva")
+load("glm_models/model5RTFFcva")
+load("glm_models/model6RTFFcva")
+load("glm_models/model7RTFFcva")
+load("glm_models/model8RTFFcva")
+
+modelCompRTFF = anova(model1RTFFcva,model2RTFFcva,model3RTFFcva,model4RTFFcva,model5RTFFcva,model6RTFFcva,model7RTFFcva,model8RTFFcva)
+print(paste0("the model with the lowest AIC is ", row.names(modelCompRTFF)[which(modelCompRTFF$AIC == min(modelCompRTFF$AIC))]))
+
+#### final model
+model_glm_final_cva <- glmer(TRsecval ~ (grade+SNRdB+difficulty)^2 + (SNRdB + difficulty|ID), family = inverse.gaussian(link='log'), data = glm_table_corrRT_advschild,glmerControl(optimizer="bobyqa", optCtrl = list(maxfun = 100000)))
+save(model_glm_final_cva,file = "glm_models/model_glm_final_cva")
+###### stats on the final model
+load("glm_models/model_glm_final_cva")
+statsmodelglm = Anova(model_glm_final_cva,type = 2) # tests stats
+print(statsmodelglm, digits = 4)
+
+
+
+#### post-hocs for grade:SNRdB interaction
+PH_grade_SNR <- emmeans(model_glm_final_cva, pairwise ~  grade | SNRdB)
+print(PH_grade_SNR)
+PH_SNR_grade <- emmeans(model_glm_final_cva, pairwise ~  SNRdB | grade)
+print(PH_SNR_grade)
+
+#### post-hocs for grade:difficulty interaction
+PH_grade_diff <- emmeans(model_glm_final_cva, pairwise ~  grade | difficulty)
+print(PH_grade_diff)
+PH_diff_grade <- emmeans(model_glm_final_cva, pairwise ~  difficulty | grade)
+print(PH_diff_grade)
+
+#### post-hocs for SNRdB:difficulty interaction
+PH_SNR_diff <- emmeans(model_glm_final_cva, pairwise ~  SNRdB | difficulty)
+print(PH_SNR_diff)
+PH_diff_SNR <- emmeans(model_glm_final_cva, pairwise ~  difficulty | SNRdB)
+print(PH_diff_SNR)
+```
+
+
+### Figure developmental trajectory
+
+```{r accuracy}
+#### transforms data table into proportion data
+glm_table_all %>%
+  group_by(ID,grade,difficulty,SNRdB) %>%
+  summarise(perf = mean(ans)) -> mean_table_all
+
+mean_table_all$grade = factor(mean_table_all$grade,levels = c("GS","CP","CE1","CE2","CM1","CM2","adult"))
+mean_table_all$difficulty = factor(mean_table_all$difficulty, levels = c("easy","difficult"))
+
+ perf_trajdev = ggplot(mean_table_all, aes(x=grade,y=perf)) +
+   geom_point(aes(color = difficulty,group = difficulty:as.factor(SNRdB)), stat = "summary", fun = "mean", show.legend = F,size = 4,shape = 17) +
+   geom_line(aes(color = difficulty,linetype = as.factor(SNRdB),group = difficulty:as.factor(SNRdB)), stat = "summary", fun = "mean",size = 1) +
+   stat_summary(fun.data = mean_se, geom = "linerange",aes(color = difficulty,group = difficulty:as.factor(SNRdB)), size = 1, show.legend = F) +
+  scale_color_manual(values = c("#d8b365", "#5ab4ac"),name = "Difficulty", labels = c("Easy","Difficult")) +
+  scale_linetype_manual(values = c(1,2),name = "Signal/noise ratio", labels = c("-3 dB","+3 dB")) +
+   scale_x_discrete(name = "Grade", labels = c("KG","1st","2nd","3rd","4th","5th","Adults")) +
+   ylab("Accuracy (%)") +
+    guides(linetype=guide_legend(keywidth = 3, keyheight = 1),
+          color=guide_legend(keywidth = 3, keyheight = 1)) +
+   theme_classic() +
+   theme(axis.text=element_text(size=18),axis.title=element_text(size=25),legend.text=element_text(size=18),legend.title=element_text(size=20),
+        panel.background = element_rect(fill='transparent'),
+        plot.background = element_rect(fill='transparent', colour=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill='transparent',colour = NA),
+        legend.box.background = element_rect(fill='transparent'))
+ perf_trajdev
+#ggsave(plot = perf_trajdev_poster,filename =  "trajdev_poster.png",device = "png",width = 12,bg='transparent')
+
+```
+
+```{r RT corrects}
+
+glm_table_all %>%
+  subset(ans == 1) %>%
+  group_by(ID,grade,difficulty,SNRdB) %>%
+  summarise(TR = mean(Trsec)) -> mean_table_all
+#unite(SNRdB,difficulty,col="condition",sep = "_")
+
+#allcond_table$condition  <- factor(allcond_table$condition , levels = c("-3_difficult","3_difficult","-3_easy","3_easy"))
+
+mean_table_all$grade = factor(mean_table_all$grade,levels = c("GS","CP","CE1","CE2","CM1","CM2","adult"))
+mean_table_all$difficulty = factor(mean_table_all$difficulty, levels = c("easy","difficult"))
+
+ TR_trajdev = ggplot(mean_table_all, aes(x=grade,y=TR)) +
+   geom_point(aes(color = difficulty,group = difficulty:as.factor(SNRdB)), stat = "summary", fun = "mean", show.legend = F,size = 4,shape = 17) +
+   geom_line(aes(color = difficulty,linetype = as.factor(SNRdB),group = difficulty:as.factor(SNRdB)), stat = "summary", fun = "mean",size = 1) +
+   stat_summary(fun.data = mean_se, geom = "linerange",aes(color = difficulty,group = difficulty:as.factor(SNRdB)), size = 1, show.legend = F) +
+  scale_color_manual(values = c("#d8b365", "#5ab4ac"),name = "Difficulty", labels = c("Easy","Difficult")) +
+  scale_linetype_manual(values = c(1,2),name = "Signal/noise ratio", labels = c("-3 dB","+3 dB")) +
+   scale_x_discrete(name = "Grade", labels = c("KG","1st","2nd","3rd","4th","5th","Adults")) +
+   ylab("Correct response times (s)") +
+    guides(linetype=guide_legend(keywidth = 3, keyheight = 1),
+          color=guide_legend(keywidth = 3, keyheight = 1)) +
+   theme_classic() +
+   theme(axis.text=element_text(size=18),axis.title=element_text(size=25),legend.text=element_text(size=18),legend.title=element_text(size=20),
+        panel.background = element_rect(fill='transparent'),
+        plot.background = element_rect(fill='transparent', colour=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill='transparent',colour = NA),
+        legend.box.background = element_rect(fill='transparent'))
+ TR_trajdev
+#ggsave(plot = perf_trajdev_poster,filename =  "trajdev_poster.png",device = "png",width = 12,bg='transparent')
+ 
+ #### interaction
+TR_interaction_snrdiff = ggplot(subset(mean_table_all,grade != "adult"), aes(x=difficulty,y=TR, shape = as.factor(SNRdB))) +
+  stat_summary(fun.y= "mean", geom = "point", position = position_dodge(0.3),width = 0.7,size = 3.5) +
+  stat_summary(aes(group = SNRdB),fun.y= "mean", geom = "line", position = position_dodge(0.3),lwd = 0.7) +
+  stat_summary(fun.y= "mean", fun.ymin = lowsd, fun.ymax = highsd, geom = "errorbar", position=position_dodge(0.3), colour = "black", width = 0.2) +
+  scale_x_discrete(limits = c("easy","difficult"),labels = c("Easy","Difficult")) +
+  scale_shape_manual(name = "SNR (dB)",
+                     labels = c("-3 dB", "+3 dB"), values = c(16,17)
+                     ) +
+  ylab(label ="Correct response times (s)") +
+  xlab(label="Difficulty") +
+  #scale_fill_grey(name = "SNRdB", labels = c("-3","+3"),start = 0.5) +
+  #coord_cartesian(ylim = c(0,100)) +
+  theme_light() +
+  theme_classic()+
+  theme(axis.text=element_text(size=18),axis.title=element_text(size=25),legend.text=element_text(size=23),legend.title=element_text(size=25),strip.text.x = element_text(size = 20),
+        panel.background = element_rect(fill='transparent'),
+        plot.background = element_rect(fill='transparent', colour=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill='transparent',colour = NA),
+        legend.box.background = element_rect(fill='transparent'))
+TR_interaction_snrdiff
+
+```
+
+```{r final plot}
+trajdev_final = grid.arrange(perf_trajdev,TR_trajdev,TR_interaction_snrdiff,nrow = 1,ncol=3)
+trajdev_perf_TR = ggarrange(perf_trajdev,TR_trajdev,nrow = 1,ncol = 2, common.legend = T,legend = "right")
+trajdev_final = ggarrange(trajdev_perf_TR,TR_interaction_snrdiff, widths = c(3, 1.5),legend = "right")
+ggsave("trajdev_final.png", trajdev_final,device = "png", width = 24,height = 7)
+
+```
+
